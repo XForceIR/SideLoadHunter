@@ -1,4 +1,23 @@
-﻿#Importing Get-Hash helper function for ps2 systems from jaredcatkinson. Credit: https://gist.github.com/jaredcatkinson/7d561b553a04501238f8e4f061f112b7
+﻿#Set Directories to Scan
+param (
+$TargetDir
+)
+
+if($TargetDir -eq $null)
+{
+    $TargetBins = Get-ChildItem -Path $env:HOMEDRIVE\Users , $env:HOMEDRIVE\ProgramData, $env:HOMEDRIVE\Intel, $env:HOMEDRIVE\Recovery -Force -Recurse -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".exe")} -ErrorAction SilentlyContinue 
+    $TargetDLLs = Get-ChildItem -Path $env:HOMEDRIVE\Users , $env:HOMEDRIVE\ProgramData, $env:HOMEDRIVE\Intel, $env:HOMEDRIVE\Recovery -Force -Recurse -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".dll")} -ErrorAction SilentlyContinue
+    write-host "Analyzing DLL/EXE metadata in Users, ProgramData, Intel, Recovery directories"
+}
+else
+{
+    $TargetBins = Get-ChildItem -Path "$TargetDir" -Force -Recurse -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".exe")} -ErrorAction SilentlyContinue 
+    $TargetDLLs = Get-ChildItem -Path "$TargetDir" -Force -Recurse -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".dll")} -ErrorAction SilentlyContinue
+    write-host "Analyzing DLL/EXE metadata in: " $TargetDir
+}
+
+
+#Importing Get-Hash helper function for ps2 systems from jaredcatkinson. Credit: https://gist.github.com/jaredcatkinson/7d561b553a04501238f8e4f061f112b7
 function Get-Hash
 {
     <#
@@ -1035,17 +1054,18 @@ if ($AppCompatCache -ne $null) {
 ##Start side load detects
 Function Get-SideLoadDetectsPS45
 {
+ write-host "Searching for evidence of sideloading"
 $SideLoadDetectArray = @()
  
 $count = 0
 
-foreach($UserLandDLL in $UserLandDLLs)
+foreach($TargetDLL in $TargetDLLs)
 {
     
-   if ($Sys32DLLList.Name -contains $UserLandDLL.Name)
+   if ($Sys32DLLList.Name -contains $TargetDLL.Name)
    {
-        $UserLandExes=""
-        [array]$check = $Sys32DLLList | where {$_.Name -eq $UserLandDLL.Name}
+        $TargetDirExes=""
+        [array]$check = $Sys32DLLList | where {$_.Name -eq $TargetDLL.Name}
         if($check.Length -gt 1)
         {
             foreach($dll in $check)
@@ -1055,29 +1075,29 @@ foreach($UserLandDLL in $UserLandDLLs)
                 $MSSubject = "CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
                 if ($CertSubject.Subject -ne $MSSubject)
                 {
-                    $UserLandExes = Get-ChildItem $dll.Directory -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".exe")} -ErrorAction SilentlyContinue
-                    foreach($UserLandExe in $UserLandExes)
+                    $TargetDirExes = Get-ChildItem $dll.Directory -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".exe")} -ErrorAction SilentlyContinue
+                    foreach($TargetDirExe in $TargetDirExes)
                     {
                                               
-                        if($UserLandExe.VersionInfo.OriginalFileName)
+                        if($TargetDirExe.VersionInfo.OriginalFileName)
                         {
-                            [string]$UserLandExeOGName = $UserLandExe.VersionInfo.OriginalFileName.replace(".MUI","")
+                            [string]$TargetDirExeOGName = $TargetDirExe.VersionInfo.OriginalFileName.replace(".MUI","")
                         }
-                        if (($Sys32BinList.Name -contains $UserLandExeOGName) -or ($Sys32BinList.Name -contains $UserLandExe.Name))
+                        if (($Sys32BinList.Name -contains $TargetDirExeOGName) -or ($Sys32BinList.Name -contains $TargetDirExe.Name))
                         {
                             if ($PSVersionTable.PSVersion.Major -lt 4)
                             {
-                                $DllHash = Get-Hash -Algorithm MD5 -FilePath $UserLandDLL.FullName -ErrorAction SilentlyContinue
+                                $DllHash = Get-Hash -Algorithm MD5 -FilePath $TargetDLL.FullName -ErrorAction SilentlyContinue
                             }
                             else
                             {
-                                $DllHash = Get-FileHash -Algorithm MD5 $UserLandDLL.FullName -ErrorAction SilentlyContinue
+                                $DllHash = Get-FileHash -Algorithm MD5 $TargetDLL.FullName -ErrorAction SilentlyContinue
                             }
                             
                             $SideLoadDetectObject = New-Object psobject
                             $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
-                            $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadExe" -Value $UserLandExe.FullName
-                            $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadExeOriginalFilename" -Value $UserLandExe.VersionInfo.OriginalFileName
+                            $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadExe" -Value $TargetDirExe.FullName
+                            $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadExeOriginalFilename" -Value $TargetDirExe.VersionInfo.OriginalFileName
                             $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadDLL" -Value $dll.FullName
                             $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "DLLHash" -Value $dll.Hash
                             $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SigStatus" -Value $DllSigResult.Status
@@ -1090,36 +1110,36 @@ foreach($UserLandDLL in $UserLandDLLs)
         if($check.Length -eq 1)
         {
             
-            $DllSigResult = Get-AuthenticodeSignature $UserLandDLL.FullName -ErrorAction Ignore
-            $CertSubject = Get-AuthenticodeSignature $UserLandDLL.FullName | ` Select-Object -Property @{Name='Subject';Expression={($_.SignerCertificate.Subject)}}
+            $DllSigResult = Get-AuthenticodeSignature $TargetDLL.FullName -ErrorAction Ignore
+            $CertSubject = Get-AuthenticodeSignature $TargetDLL.FullName | ` Select-Object -Property @{Name='Subject';Expression={($_.SignerCertificate.Subject)}}
             $MSSubject = "CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
             
                       
-               $UserLandExes = Get-ChildItem $UserLandDLL.Directory -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".exe")} -ErrorAction SilentlyContinue
-               foreach($UserLandExe in $UserLandExes)
+               $TargetDirExes = Get-ChildItem $TargetDLL.Directory -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".exe")} -ErrorAction SilentlyContinue
+               foreach($TargetDirExe in $TargetDirExes)
                {
-                if($UserLandExe.VersionInfo.OriginalFileName)
+                if($TargetDirExe.VersionInfo.OriginalFileName)
                 {
-                      [string]$UserLandExeOGName = $UserLandExe.VersionInfo.OriginalFileName.replace(".MUI","")
+                      [string]$TargetDirExeOGName = $TargetDirExe.VersionInfo.OriginalFileName.replace(".MUI","")
                 }
 
                 if ($CertSubject.Subject -ne $MSSubject)
                 {
-                    if ($Sys32BinList.Name -contains $UserLandExeOGName)
+                    if ($Sys32BinList.Name -contains $TargetDirExeOGName)
                     {
                         if ($PSVersionTable.PSVersion.Major -lt 4)
                             {
-                                $DllHash = Get-Hash -Algorithm MD5 -FilePath $UserLandDLL.FullName -ErrorAction SilentlyContinue
+                                $DllHash = Get-Hash -Algorithm MD5 -FilePath $TargetDLL.FullName -ErrorAction SilentlyContinue
                             }
                             else
                             {
-                                $DllHash = Get-FileHash -Algorithm MD5 $UserLandDLL.FullName -ErrorAction SilentlyContinue
+                                $DllHash = Get-FileHash -Algorithm MD5 $TargetDLL.FullName -ErrorAction SilentlyContinue
                             }
                         $SideLoadDetectObject = New-Object psobject
                         $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
-                        $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadExe" -Value $UserLandExe.FullName
-                        $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadExeOriginalFilename" -Value $UserLandExe.VersionInfo.OriginalFileName
-                        $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadDLL" -Value $UserLandDLL.FullName
+                        $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadExe" -Value $TargetDirExe.FullName
+                        $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadExeOriginalFilename" -Value $TargetDirExe.VersionInfo.OriginalFileName
+                        $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadDLL" -Value $TargetDLL.FullName
                         $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "DLLHash" -Value $DllHash.Hash
                         $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SigStatus" -Value $DllSigResult.Status
                         $SideLoadDetectArray += $SideLoadDetectObject
@@ -1141,16 +1161,17 @@ $SideLoadDetectArray | Export-csv -NoTypeInformation $CollectionPath\SideLoadDet
 
 Function Get-SideLoadDetectsPS23
 {
+write-host "Searching for evidence of sideloading"
 $SideLoadDetectArray = @()
 $count = 0
 
-foreach($UserLandDLL in $UserLandDLLs)
+foreach($TargetDLL in $TargetDLLs)
 {
     
-   if (@($Sys32DLLList| %{$_.Name}) -contains $UserLandDLL.Name)
+   if (@($Sys32DLLList| %{$_.Name}) -contains $TargetDLL.Name)
    {
-        $UserLandExes=""
-        [array]$check = $Sys32DLLList | where {$_.Name -eq $UserLandDLL.Name}
+        $TargetDirExes=""
+        [array]$check = $Sys32DLLList | where {$_.Name -eq $TargetDLL.Name}
         if($check.Length -gt 1)
         {
             foreach($dll in $check)
@@ -1160,30 +1181,30 @@ foreach($UserLandDLL in $UserLandDLLs)
                 $MSSubject = "CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
                 if ($CertSubject.Subject -ne $MSSubject)
                 {
-                    $UserLandExes = Get-ChildItem $dll.Directory -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".exe")} -ErrorAction SilentlyContinue
-                    foreach($UserLandExe in $UserLandExes)
+                    $TargetDirExes = Get-ChildItem $dll.Directory -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".exe")} -ErrorAction SilentlyContinue
+                    foreach($TargetDirExe in $TargetDirExes)
                     {
-                        if($UserLandExe.VersionInfo.OriginalFileName)
+                        if($TargetDirExe.VersionInfo.OriginalFileName)
                         {
-                            [string]$UserLandExeOGName = $UserLandExe.VersionInfo.OriginalFileName.replace(".MUI","")
+                            [string]$TargetDirExeOGName = $TargetDirExe.VersionInfo.OriginalFileName.replace(".MUI","")
                         }
                        
                        
-                        if ((@($Sys32BinList| %{$_.Name}) -contains $UserLandExeOGName) -or (@($Sys32BinList| %{$_.Name}) -contains $UserLandExe.Name))
+                        if ((@($Sys32BinList| %{$_.Name}) -contains $TargetDirExeOGName) -or (@($Sys32BinList| %{$_.Name}) -contains $TargetDirExe.Name))
                         {
                             if ($PSVersionTable.PSVersion.Major -lt 4)
                             {
-                                $DllHash = Get-Hash -Algorithm MD5 -FilePath $UserLandDLL.FullName -ErrorAction SilentlyContinue
+                                $DllHash = Get-Hash -Algorithm MD5 -FilePath $TargetDLL.FullName -ErrorAction SilentlyContinue
                             }
                             else
                             {
-                                $DllHash = Get-FileHash -Algorithm MD5 $UserLandDLL.FullName -ErrorAction SilentlyContinue
+                                $DllHash = Get-FileHash -Algorithm MD5 $TargetDLL.FullName -ErrorAction SilentlyContinue
                             }
                             
                             $SideLoadDetectObject = New-Object psobject
                             $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
-                            $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadExe" -Value $UserLandExe.FullName
-                            $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadExeOriginalFilename" -Value $UserLandExeOGName
+                            $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadExe" -Value $TargetDirExe.FullName
+                            $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadExeOriginalFilename" -Value $TargetDirExeOGName
                             $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadDLL" -Value $dll.FullName
                             $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "DLLHash" -Value $dll.Hash
                             $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SigStatus" -Value $DllSigResult.Status
@@ -1196,41 +1217,41 @@ foreach($UserLandDLL in $UserLandDLLs)
         if($check.Length -eq 1)
         {
 
-               $DllSigResult = Get-AuthenticodeSignature $UserLandDLL.FullName -ErrorAction Ignore
-               $CertSubject = Get-AuthenticodeSignature $UserLandDLL.FullName | ` Select-Object -Property @{Name='Subject';Expression={($_.SignerCertificate.Subject)}}
+               $DllSigResult = Get-AuthenticodeSignature $TargetDLL.FullName -ErrorAction Ignore
+               $CertSubject = Get-AuthenticodeSignature $TargetDLL.FullName | ` Select-Object -Property @{Name='Subject';Expression={($_.SignerCertificate.Subject)}}
                $MSSubject = "CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"     
-               $UserLandExes = Get-ChildItem $UserLandDLL.Directory -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".exe")} -ErrorAction SilentlyContinue
-               foreach($UserLandExe in $UserLandExes)
+               $TargetDirExes = Get-ChildItem $TargetDLL.Directory -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".exe")} -ErrorAction SilentlyContinue
+               foreach($TargetDirExe in $TargetDirExes)
                {
-                [string]$UserLandExeName = @($UserLandExe| %{$_.Name})
-                [string]$UserLandExeFullName = @($UserLandExe| %{$_.FullName})
+                [string]$TargetDirExeName = @($TargetDirExe| %{$_.Name})
+                [string]$TargetDirExeFullName = @($TargetDirExe| %{$_.FullName})
                 
-                if($UserLandExe.VersionInfo.OriginalFileName)
+                if($TargetDirExe.VersionInfo.OriginalFileName)
                 {
-                    [string]$UserLandExeOGName = $UserLandExe.VersionInfo.OriginalFileName.replace(".MUI","")
+                    [string]$TargetDirExeOGName = $TargetDirExe.VersionInfo.OriginalFileName.replace(".MUI","")
                 }
                 
                                 
                 if ($CertSubject.Subject -ne $MSSubject)
                 {
 
-                    if ((@($Sys32BinList| %{$_.Name}) -contains $UserLandExeOGName) -or (@($Sys32BinList| %{$_.Name}) -contains $UserLandExe.Name))
+                    if ((@($Sys32BinList| %{$_.Name}) -contains $TargetDirExeOGName) -or (@($Sys32BinList| %{$_.Name}) -contains $TargetDirExe.Name))
                     {
                        
                         if ($PSVersionTable.PSVersion.Major -lt 4)
                             {
-                                $DllHash = Get-Hash -Algorithm MD5 -FilePath $UserLandDLL.FullName -ErrorAction SilentlyContinue
+                                $DllHash = Get-Hash -Algorithm MD5 -FilePath $TargetDLL.FullName -ErrorAction SilentlyContinue
                             }
                             else
                             {
-                                $DllHash = Get-FileHash -Algorithm MD5 $UserLandDLL.FullName -ErrorAction SilentlyContinue
+                                $DllHash = Get-FileHash -Algorithm MD5 $TargetDLL.FullName -ErrorAction SilentlyContinue
                             }
                         
                         $SideLoadDetectObject = New-Object psobject
                         $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
-                        $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadExe" -Value $UserLandExeFullName
-                        $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadExeOriginalFilename" -Value $UserLandExeOGName
-                        $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadDLL" -Value $UserLandDLL.FullName
+                        $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadExe" -Value $TargetDirExeFullName
+                        $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadExeOriginalFilename" -Value $TargetDirExeOGName
+                        $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SideLoadDLL" -Value $TargetDLL.FullName
                         $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "DLLHash" -Value $DllHash.Hash
                         $SideLoadDetectObject | Add-Member -MemberType NoteProperty -Name "SigStatus" -Value $DllSigResult.Status
                         $SideLoadDetectArray += $SideLoadDetectObject
@@ -1257,54 +1278,53 @@ $SideLoadDetectArray | Export-csv -NoTypeInformation $CollectionPath\SideLoadDet
 
 Function Get-SusExecsPS45
 {
-write-host "Analyzing binaries in userland"
+write-host "Scanning for system executables not in the default locations"
 $SusBinListArray = @()
 $ErrorActionPreference = "SilentlyContinue"
-$UserLandBins = Get-ChildItem -Path $env:HOMEDRIVE\Users , $env:HOMEDRIVE\ProgramData, $env:HOMEDRIVE\Intel, $env:HOMEDRIVE\Recovery -Recurse -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".exe")} -ErrorAction SilentlyContinue 
 $count = 0
 
 #Start Find possible sideloaded exes
-foreach($UserLandBin in $UserLandBins)
+foreach($TargetDirBin in $TargetBins)
 {
     
         
-    if($UserLandBin.VersionInfo.OriginalFileName)
+    if($TargetDirBin.VersionInfo.OriginalFileName)
     {
-        [string]$UserLandExeOGName = $UserLandBin.VersionInfo.OriginalFileName.replace(".MUI","")
+        [string]$TargetDirExeOGName = $TargetDirBin.VersionInfo.OriginalFileName.replace(".MUI","")
     }
-    if(($64BinsOnly.InputObject -contains $UserLandExeOGName) -or ($64BinsOnly.InputObject -contains $UserLandBin.Name))
+    if(($64BinsOnly.InputObject -contains $TargetDirExeOGName) -or ($64BinsOnly.InputObject -contains $TargetDirBin.Name))
     {
-       if ($Sys64BinList.Name -contains $UserLandExeOGName)
+       if ($Sys64BinList.Name -contains $TargetDirExeOGName)
        {
-            [array]$check = $Sys64BinList | where {$_.Name -eq $UserLandBin.VersionInfo.OriginalFileName}
+            [array]$check = $Sys64BinList | where {$_.Name -eq $TargetDirBin.VersionInfo.OriginalFileName}
        }
        else
        {
-            [array]$check = $Sys64BinList | where {$_.Name -eq $UserLandBin.Name}
+            [array]$check = $Sys64BinList | where {$_.Name -eq $TargetDirBin.Name}
        }
               if($check.Length -gt 1)
        {
             foreach($bin in $check)
             {
-                [string]$stringpath = $UserLandBin.FullName
+                [string]$stringpath = $TargetDirBin.FullName
                 if (($bin.FullName.ToLower() -ne $stringpath.ToLower()) -and ($stringpath.Length -gt 0))
                 {
            
                     if ($PSVersionTable.PSVersion.Major -lt 4)
                     {
-                        $UserLandHash = Get-Hash -Algorithm MD5 -FilePath $bin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-Hash -Algorithm MD5 -FilePath $bin.FullName -ErrorAction SilentlyContinue
                         $Sys64BinHash = Get-Hash -Algorithm MD5 -FilePath $check.FullName -ErrorAction SilentlyContinue
                     }
                     else
                     { 
-                        $UserLandHash = Get-FileHash -Algorithm MD5 $bin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-FileHash -Algorithm MD5 $bin.FullName -ErrorAction SilentlyContinue
                         $Sys64BinHash = Get-FileHash -Algorithm MD5 $check.FullName -ErrorAction SilentlyContinue
                     }
                     $SusBinListObject = New-Object psobject
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExe" -Value $bin.FullName
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeOGName" -Value $bin.VersionInfo.OriginalFileName
-                    $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeHash" -Value $UserLandHash.Hash
+                    $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeHash" -Value $TargetDirHash.Hash
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "WinSysMatch" -Value $check.FullName
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "WinSysHash" -Value $Sys64BinHash.Hash
                     $SusBinListArray += $SusBinListObject
@@ -1313,64 +1333,64 @@ foreach($UserLandBin in $UserLandBins)
        }
        if($check.Length -eq 1)
        {
-            [string]$stringpath = $UserLandBin.FullName
+            [string]$stringpath = $TargetDirBin.FullName
             if (($check.FullName.ToLower() -ne $stringpath.ToLower()) -and ($stringpath.Length -gt 0))
             {
            
                     if ($PSVersionTable.PSVersion.Major -lt 4)
                     {
-                        $UserLandHash = Get-Hash -Algorithm MD5 -FilePath $UserLandBin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-Hash -Algorithm MD5 -FilePath $TargetDirBin.FullName -ErrorAction SilentlyContinue
                         $Sys64BinHash = Get-Hash -Algorithm MD5 -FilePath $check.FullName -ErrorAction SilentlyContinue
                     }
                     else
                     {
-                        $UserLandHash = Get-FileHash -Algorithm MD5 $UserLandBin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-FileHash -Algorithm MD5 $TargetDirBin.FullName -ErrorAction SilentlyContinue
                         $Sys64BinHash = Get-FileHash -Algorithm MD5 $check.FullName -ErrorAction SilentlyContinue
                     }
             $SusBinListObject = New-Object psobject
             $SusBinListObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
-            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExe" -Value $UserLandBin.FullName
-            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeOGName" -Value $UserLandBin.VersionInfo.OriginalFileName
-            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeHash" -Value $UserLandHash.Hash
+            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExe" -Value $TargetDirBin.FullName
+            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeOGName" -Value $TargetDirBin.VersionInfo.OriginalFileName
+            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeHash" -Value $TargetDirHash.Hash
             $SusBinListObject | Add-Member -MemberType NoteProperty -Name "WinSysMatch" -Value $check.FullName
             $SusBinListObject | Add-Member -MemberType NoteProperty -Name "WinSysHash" -Value $Sys64BinHash.Hash
             $SusBinListArray += $SusBinListObject
             }
        }
     }
-    elseif (($Sys32BinList.Name -contains $UserLandExeOGName) -or ($Sys32BinList.Name -contains $UserLandBin.Name))
+    elseif (($Sys32BinList.Name -contains $TargetDirExeOGName) -or ($Sys32BinList.Name -contains $TargetDirBin.Name))
     {
-       if ($Sys32BinList.Name -contains $UserLandBin.VersionInfo.OriginalFileName)
+       if ($Sys32BinList.Name -contains $TargetDirBin.VersionInfo.OriginalFileName)
        {
-            [array]$check = $Sys32BinList | where {$_.Name -eq $UserLandExeOGName }
+            [array]$check = $Sys32BinList | where {$_.Name -eq $TargetDirExeOGName }
        }
        else
        {
-            [array]$check = $Sys32BinList | where {$_.Name -eq $UserLandBin.Name}
+            [array]$check = $Sys32BinList | where {$_.Name -eq $TargetDirBin.Name}
        }
        if($check.Length -gt 1)
        {
             foreach($bin in $check)
             {
-                [string]$stringpath = $UserLandBin.FullName
+                [string]$stringpath = $TargetDirBin.FullName
                 if (($bin.FullName.ToLower() -ne $stringpath.ToLower()) -and ($stringpath.Length -gt 0))
                 {
            
                     if ($PSVersionTable.PSVersion.Major -lt 4)
                     {
-                        $UserLandHash = Get-Hash -Algorithm MD5 -FilePath $bin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-Hash -Algorithm MD5 -FilePath $bin.FullName -ErrorAction SilentlyContinue
                         $Sys64BinHash = Get-Hash -Algorithm MD5 -FilePath $check.FullName -ErrorAction SilentlyContinue
                     }
                     else
                     {
-                        $UserLandHash = Get-FileHash -Algorithm MD5 $bin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-FileHash -Algorithm MD5 $bin.FullName -ErrorAction SilentlyContinue
                         $Sys64BinHash = Get-FileHash -Algorithm MD5 $check.FullName -ErrorAction SilentlyContinue
                     }
                     $SusBinListObject = New-Object psobject
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExe" -Value $bin.FullName
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeOGName" -Value $bin.VersionInfo.OriginalFileName
-                    $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeHash" -Value $UserLandHash.Hash
+                    $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeHash" -Value $TargetDirHash.Hash
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "WinSysMatch" -Value $check.FullName
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "WinSysHash" -Value $Sys32BinHash.Hash
                     $SusBinListArray += $SusBinListObject
@@ -1379,25 +1399,25 @@ foreach($UserLandBin in $UserLandBins)
        }
        if($check.Length -eq 1)
        {
-            [string]$stringpath = $UserLandBin.FullName
+            [string]$stringpath = $TargetDirBin.FullName
             if (($check.FullName.ToLower() -ne $stringpath.ToLower()) -and ($stringpath.Length -gt 0))
             {
            
                     if ($PSVersionTable.PSVersion.Major -lt 4)
                     {
-                        $UserLandHash = Get-Hash -Algorithm MD5 -FilePath $UserLandBin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-Hash -Algorithm MD5 -FilePath $TargetDirBin.FullName -ErrorAction SilentlyContinue
                         $Sys64BinHash = Get-Hash -Algorithm MD5 -FilePath $check.FullName -ErrorAction SilentlyContinue
                     }
                     else
                     {
-                        $UserLandHash = Get-FileHash -Algorithm MD5 $UserLandBin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-FileHash -Algorithm MD5 $TargetDirBin.FullName -ErrorAction SilentlyContinue
                         $Sys64BinHash = Get-FileHash -Algorithm MD5 $check.FullName -ErrorAction SilentlyContinue
                     }
             $SusBinListObject = New-Object psobject
             $SusBinListObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
-            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExe" -Value $UserLandBin.FullName
-            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeOGName" -Value $UserLandBin.VersionInfo.OriginalFileName
-            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeHash" -Value $UserLandHash.Hash
+            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExe" -Value $TargetDirBin.FullName
+            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeOGName" -Value $TargetDirBin.VersionInfo.OriginalFileName
+            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeHash" -Value $TargetDirHash.Hash
             $SusBinListObject | Add-Member -MemberType NoteProperty -Name "WinSysMatch" -Value $check.FullName
             $SusBinListObject | Add-Member -MemberType NoteProperty -Name "WinSysHash" -Value $Sys32BinHash.Hash
             $SusBinListArray += $SusBinListObject
@@ -1420,54 +1440,54 @@ $SusBinListArray | Export-csv -NoTypeInformation $CollectionPath\SuspiciousBinsL
 
 Function Get-SusExecsPS23
 {
-write-host "Analyzing binaries in userland"
+write-host "Scanning for system executables not in the default locations"
 $SusBinListArray = @()
 $ErrorActionPreference = "SilentlyContinue"
 $count = 0
 
 #Start Find possible sideloaded exes
-foreach($UserLandBin in $UserLandBins)
+foreach($TargetDirBin in $TargetBins)
 {
     
-     if($UserLandBin.VersionInfo.OriginalFileName)
+     if($TargetDirBin.VersionInfo.OriginalFileName)
     {
-        [string]$UserLandExeOGName = $UserLandBin.VersionInfo.OriginalFileName.replace(".MUI","")
+        [string]$TargetDirExeOGName = $TargetDirBin.VersionInfo.OriginalFileName.replace(".MUI","")
     }      
-    if((@($64BinsOnly| %{$_.InputObject}) -contains $UserLandExeOGName) -or (@($64BinsOnly| %{$_.InputObject}) -contains $UserLandBin.Name))
+    if((@($64BinsOnly| %{$_.InputObject}) -contains $TargetDirExeOGName) -or (@($64BinsOnly| %{$_.InputObject}) -contains $TargetDirBin.Name))
     {
-        if (@($Sys64BinList| %{$_.Name}) -contains $UserLandExeOGName) 
+        if (@($Sys64BinList| %{$_.Name}) -contains $TargetDirExeOGName) 
        { 
-            [array]$check = $Sys64BinList | where {$_.Name -eq $UserLandExeOGName}
+            [array]$check = $Sys64BinList | where {$_.Name -eq $TargetDirExeOGName}
        }
        else
        {
-            [array]$check = $Sys64BinList | where {$_.Name -eq $UserLandBin.Name}
+            [array]$check = $Sys64BinList | where {$_.Name -eq $TargetDirBin.Name}
        }
        if($check.Length -gt 1)
        {
             foreach($bin in $check)
             {
                 
-                [string]$stringpath = $UserLandBin.FullName
+                [string]$stringpath = $TargetDirBin.FullName
                 [string]$checkps2 = @($check| %{$_.FullName})
                 if (($checkps2.ToLower() -ne $stringpath.ToLower()) -and ($stringpath.Length -gt 0))
                 {
            
                     if ($PSVersionTable.PSVersion.Major -lt 4)
                     {
-                        $UserLandHash = Get-Hash -Algorithm MD5 -FilePath $bin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-Hash -Algorithm MD5 -FilePath $bin.FullName -ErrorAction SilentlyContinue
                         $Sys64BinHash = Get-Hash -Algorithm MD5 -FilePath $checkps2 -ErrorAction SilentlyContinue
                     }
                     else
                     {
-                        $UserLandHash = Get-FileHash -Algorithm MD5 $bin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-FileHash -Algorithm MD5 $bin.FullName -ErrorAction SilentlyContinue
                         $Sys64BinHash = Get-FileHash -Algorithm MD5 $checkps2 -ErrorAction SilentlyContinue
                     }
                     $SusBinListObject = New-Object psobject
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExe" -Value $bin.FullName
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeOGName" -Value $bin.VersionInfo.OriginalFileName
-                    $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeHash" -Value $UserLandHash.Hash
+                    $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeHash" -Value $TargetDirHash.Hash
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "WinSysMatch" -Value $checkps2
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "WinSysHash" -Value $Sys64BinHash.Hash
                     $SusBinListArray += $SusBinListObject
@@ -1476,41 +1496,41 @@ foreach($UserLandBin in $UserLandBins)
        }
        if($check.Length -eq 1)
        {
-            [string]$stringpath = $UserLandBin.FullName
+            [string]$stringpath = $TargetDirBin.FullName
             [string]$checkps2 = @($check| %{$_.FullName})
             if (($checkps2.ToLower() -ne $stringpath.ToLower()) -and ($stringpath.Length -gt 0))
             {
            
                     if ($PSVersionTable.PSVersion.Major -lt 4)
                     {
-                        $UserLandHash = Get-Hash -Algorithm MD5 -FilePath $UserLandBin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-Hash -Algorithm MD5 -FilePath $TargetDirBin.FullName -ErrorAction SilentlyContinue
                         $Sys64BinHash = Get-Hash -Algorithm MD5 -FilePath $checkps2 -ErrorAction SilentlyContinue
                     }
                     else
                     {
-                        $UserLandHash = Get-FileHash -Algorithm MD5 $UserLandBin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-FileHash -Algorithm MD5 $TargetDirBin.FullName -ErrorAction SilentlyContinue
                         $Sys64BinHash = Get-FileHash -Algorithm MD5 $checkps2 -ErrorAction SilentlyContinue
                     }
             $SusBinListObject = New-Object psobject
             $SusBinListObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
-            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExe" -Value $UserLandBin.FullName
-            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeOGName" -Value $UserLandBin.VersionInfo.OriginalFileName
-            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeHash" -Value $UserLandHash.Hash
+            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExe" -Value $TargetDirBin.FullName
+            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeOGName" -Value $TargetDirBin.VersionInfo.OriginalFileName
+            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeHash" -Value $TargetDirHash.Hash
             $SusBinListObject | Add-Member -MemberType NoteProperty -Name "WinSysMatch" -Value $checkps2
             $SusBinListObject | Add-Member -MemberType NoteProperty -Name "WinSysHash" -Value $Sys64BinHash.Hash
             $SusBinListArray += $SusBinListObject
             }
        }
     }
-    elseif ((@($Sys32BinList| %{$_.Name}) -contains $UserLandExeOGName) -or (@($Sys32BinList| %{$_.Name}) -contains $UserLandBin.Name))
+    elseif ((@($Sys32BinList| %{$_.Name}) -contains $TargetDirExeOGName) -or (@($Sys32BinList| %{$_.Name}) -contains $TargetDirBin.Name))
     {
-       if (@($Sys32BinList| %{$_.Name}) -contains $UserLandExeOGName)
+       if (@($Sys32BinList| %{$_.Name}) -contains $TargetDirExeOGName)
        {
-            [array]$check = $Sys32BinList | where {$_.Name -eq $UserLandExeOGName}
+            [array]$check = $Sys32BinList | where {$_.Name -eq $TargetDirExeOGName}
        }
        else
        {
-            [array]$check = $Sys32BinList | where {$_.Name -eq $UserLandBin.Name}
+            [array]$check = $Sys32BinList | where {$_.Name -eq $TargetDirBin.Name}
        }
        
               
@@ -1518,26 +1538,26 @@ foreach($UserLandBin in $UserLandBins)
        {
             foreach($bin in $check)
             {
-                [string]$stringpath = $UserLandBin.FullName
+                [string]$stringpath = $TargetDirBin.FullName
                 [string]$checkps2 = @($check| %{$_.FullName})
                 if (($checkps2.ToLower() -ne $stringpath.ToLower()) -and ($stringpath.Length -gt 0))
                 {
            
                     if ($PSVersionTable.PSVersion.Major -lt 4)
                     {
-                        $UserLandHash = Get-Hash -Algorithm MD5 -FilePath $bin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-Hash -Algorithm MD5 -FilePath $bin.FullName -ErrorAction SilentlyContinue
                         $Sys32BinHash = Get-Hash -Algorithm MD5 -FilePath $checkps2 -ErrorAction SilentlyContinue
                     }
                     else
                     {
-                        $UserLandHash = Get-FileHash -Algorithm MD5 $bin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-FileHash -Algorithm MD5 $bin.FullName -ErrorAction SilentlyContinue
                         $Sys32BinHash = Get-FileHash -Algorithm MD5 $checkps2 -ErrorAction SilentlyContinue
                     }
                     $SusBinListObject = New-Object psobject
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExe" -Value $bin.FullName
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeOGName" -Value $bin.VersionInfo.OriginalFileName
-                    $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeHash" -Value $UserLandHash.Hash
+                    $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeHash" -Value $TargetDirHash.Hash
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "WinSysMatch" -Value $checkps2
                     $SusBinListObject | Add-Member -MemberType NoteProperty -Name "WinSysHash" -Value $Sys32BinHash.Hash
                     $SusBinListArray += $SusBinListObject
@@ -1546,26 +1566,26 @@ foreach($UserLandBin in $UserLandBins)
        }
        if($check.Length -eq 1)
        {
-            [string]$stringpath = $UserLandBin.FullName
+            [string]$stringpath = $TargetDirBin.FullName
             [string]$checkps2 = @($check| %{$_.FullName})
             if (($checkps2.ToLower() -ne $stringpath.ToLower()) -and ($stringpath.Length -gt 0))
             {
            
                     if ($PSVersionTable.PSVersion.Major -lt 4)
                     {
-                        $UserLandHash = Get-Hash -Algorithm MD5 -FilePath $UserLandBin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-Hash -Algorithm MD5 -FilePath $TargetDirBin.FullName -ErrorAction SilentlyContinue
                         $Sys32BinHash = Get-Hash -Algorithm MD5 -FilePath $checkps2 -ErrorAction SilentlyContinue
                     }
                     else
                     {
-                        $UserLandHash = Get-FileHash -Algorithm MD5 $UserLandBin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-FileHash -Algorithm MD5 $TargetDirBin.FullName -ErrorAction SilentlyContinue
                         $Sys32BinHash = Get-FileHash -Algorithm MD5 $checkps2 -ErrorAction SilentlyContinue
                     }
             $SusBinListObject = New-Object psobject
             $SusBinListObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
-            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExe" -Value $UserLandBin.FullName
-            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeOGName" -Value $UserLandBin.VersionInfo.OriginalFileName
-            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeHash" -Value $UserLandHash.Hash
+            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExe" -Value $TargetDirBin.FullName
+            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeOGName" -Value $TargetDirBin.VersionInfo.OriginalFileName
+            $SusBinListObject | Add-Member -MemberType NoteProperty -Name "SusExeHash" -Value $TargetDirHash.Hash
             $SusBinListObject | Add-Member -MemberType NoteProperty -Name "WinSysMatch" -Value $checkps2
             $SusBinListObject | Add-Member -MemberType NoteProperty -Name "WinSysHash" -Value $Sys32BinHash.Hash
             $SusBinListArray += $SusBinListObject
@@ -1590,45 +1610,45 @@ $SusBinListArray | Export-csv -NoTypeInformation $CollectionPath\SuspiciousBinsL
 ## Start Suspicious DLL Audit
 Function Get-SusDllsPS45
 {
-write-host "Analyzing DLLs in userland"
+write-host "Scanning for system dlls not in the default locations"
 $SusDLLListArray = @()
 $ErrorActionPreference = "SilentlyContinue"
 $count = 0
 
 #Start Find possible sideloaded DLLs
-foreach($UserLandDll in $UserLandDLLs)
+foreach($TargetDirDll in $TargetDLLs)
 {
 
-    if($64DllsOnly.InputObject -contains $UserLandDll.Name)
+    if($64DllsOnly.InputObject -contains $TargetDirDll.Name)
     {
-      $DllSigResult = Get-AuthenticodeSignature $UserLandDll.FullName -ErrorAction Ignore
-      $CertSubject = Get-AuthenticodeSignature $UserLandDll.FullName | Select-Object -Property @{Name='Subject';Expression={($_.SignerCertificate.Subject)}}
+      $DllSigResult = Get-AuthenticodeSignature $TargetDirDll.FullName -ErrorAction Ignore
+      $CertSubject = Get-AuthenticodeSignature $TargetDirDll.FullName | Select-Object -Property @{Name='Subject';Expression={($_.SignerCertificate.Subject)}}
       $MSSubject = "CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
       if ($CertSubject.Subject -ne $MSSubject)
       { 
-        [array]$check = $Sys64DLLList | where {$_.Name -eq $UserLandDll.Name}
+        [array]$check = $Sys64DLLList | where {$_.Name -eq $TargetDirDll.Name}
         if($check.Length -gt 1)
         {
             foreach($bin in $check)
             {
-                [string]$stringpath = $UserLandDll.FullName
+                [string]$stringpath = $TargetDirDll.FullName
                 if (($bin.FullName.ToLower() -ne $stringpath.ToLower()) -and ($stringpath.Length -gt 0))
                 {
            
                     if ($PSVersionTable.PSVersion.Major -lt 4)
                     {
-                        $UserLandHash = Get-Hash -Algorithm MD5 -FilePath $stringpath -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-Hash -Algorithm MD5 -FilePath $stringpath -ErrorAction SilentlyContinue
                         $Sys64DllHash = Get-Hash -Algorithm MD5 -FilePath $bin.FullName -ErrorAction SilentlyContinue
                     }
                     else
                     {
-                        $UserLandHash = Get-FileHash -Algorithm MD5 $stringpath -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-FileHash -Algorithm MD5 $stringpath -ErrorAction SilentlyContinue
                         $Sys64DllHash = Get-FileHash -Algorithm MD5 $bin.FullName -ErrorAction SilentlyContinue
                     }
                     $SusDLLListObject = New-Object psobject
                     $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
                     $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "SusDll" -Value $stringpath
-                    $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "SusDllHash" -Value $UserLandHash.Hash
+                    $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "SusDllHash" -Value $TargetDirHash.Hash
                     $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "WinSysMatch" -Value $bin.FullName
                     $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "WinSysHash" -Value $Sys64DllHash.Hash
                     $SusDLLListArray += $SusDLLListObject
@@ -1637,25 +1657,25 @@ foreach($UserLandDll in $UserLandDLLs)
        }
         if($check.Length -eq 1)
         {
-            [string]$stringpath = $UserLandDll.FullName
+            [string]$stringpath = $TargetDirDll.FullName
             if (($check.FullName.ToLower() -ne $stringpath.ToLower()) -and ($stringpath.Length -gt 0))
             {
            
                     if ($PSVersionTable.PSVersion.Major -lt 4)
                     {
-                        $UserLandHash = Get-Hash -Algorithm MD5 -FilePath $UserLandDll.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-Hash -Algorithm MD5 -FilePath $TargetDirDll.FullName -ErrorAction SilentlyContinue
                         $Sys64DllHash = Get-Hash -Algorithm MD5 -FilePath $check.FullName -ErrorAction SilentlyContinue
                     }
                     else
                     { 
-                        $UserLandHash = Get-FileHash -Algorithm MD5 $UserLandDll.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-FileHash -Algorithm MD5 $TargetDirDll.FullName -ErrorAction SilentlyContinue
                         $Sys64DllHash = Get-FileHash -Algorithm MD5 $check.FullName -ErrorAction SilentlyContinue
                     }
             $SusDLLListObject = New-Object psobject
             $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
             $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
             $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "SusDll" -Value $bin.FullName
-            $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "SusDllHash" -Value $UserLandHash.Hash
+            $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "SusDllHash" -Value $TargetDirHash.Hash
             $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "WinSysMatch" -Value $check.FullName
             $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "WinSysHash" -Value $Sys64DllHash.Hash
             $SusDLLListArray += $SusDLLListObject
@@ -1663,37 +1683,37 @@ foreach($UserLandDll in $UserLandDLLs)
        }
       }
     }
-    elseif ($Sys32DLLList.Name -contains $UserLandDll.Name)
+    elseif ($Sys32DLLList.Name -contains $TargetDirDll.Name)
     {
-       $DllSigResult = Get-AuthenticodeSignature $UserLandDll.FullName -ErrorAction Ignore
-       $CertSubject = Get-AuthenticodeSignature $UserLandDll.FullName | Select-Object -Property @{Name='Subject';Expression={($_.SignerCertificate.Subject)}}
+       $DllSigResult = Get-AuthenticodeSignature $TargetDirDll.FullName -ErrorAction Ignore
+       $CertSubject = Get-AuthenticodeSignature $TargetDirDll.FullName | Select-Object -Property @{Name='Subject';Expression={($_.SignerCertificate.Subject)}}
       $MSSubject = "CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
       if ($CertSubject.Subject -ne $MSSubject)
       {      
-        [array]$check = $Sys32DLLList | where {$_.Name -eq $UserLandDll.Name}
+        [array]$check = $Sys32DLLList | where {$_.Name -eq $TargetDirDll.Name}
        
         if($check.Length -gt 1)
         {
             foreach($bin in $check)
             {
-                [string]$stringpath = $UserLandDll.FullName
+                [string]$stringpath = $TargetDirDll.FullName
                 if (($bin.FullName.ToLower() -ne $stringpath.ToLower()) -and ($stringpath.Length -gt 0))
                 {
            
                     if ($PSVersionTable.PSVersion.Major -lt 4)
                     { 
-                        $UserLandHash = Get-Hash -Algorithm MD5 -FilePath $stringpath -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-Hash -Algorithm MD5 -FilePath $stringpath -ErrorAction SilentlyContinue
                         $Sys64DllHash = Get-Hash -Algorithm MD5 -FilePath $check.FullName -ErrorAction SilentlyContinue
                     }
                     else
                     {
-                        $UserLandHash = Get-FileHash -Algorithm MD5 $stringpath -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-FileHash -Algorithm MD5 $stringpath -ErrorAction SilentlyContinue
                         $Sys64DllHash = Get-FileHash -Algorithm MD5 $check.FullName -ErrorAction SilentlyContinue
                     }
                     $SusDLLListObject = New-Object psobject
                     $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
                     $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "SusDll" -Value $stringpath
-                    $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "SusDllHash" -Value $UserLandHash.Hash
+                    $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "SusDllHash" -Value $TargetDirHash.Hash
                     $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "WinSysMatch" -Value $bin.FullName
                     $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "WinSysHash" -Value $Sys32DllHash.Hash
                     $SusDLLListArray += $SusDLLListObject
@@ -1702,24 +1722,24 @@ foreach($UserLandDll in $UserLandDLLs)
        }
         if($check.Length -eq 1)
         {
-            [string]$stringpath = $UserLandDll.FullName
+            [string]$stringpath = $TargetDirDll.FullName
             if (($check.FullName.ToLower() -ne $stringpath.ToLower()) -and ($stringpath.Length -gt 0))
             {
            
                     if ($PSVersionTable.PSVersion.Major -lt 4)
                     {
-                        $UserLandHash = Get-Hash -Algorithm MD5 -FilePath $UserLandDll.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-Hash -Algorithm MD5 -FilePath $TargetDirDll.FullName -ErrorAction SilentlyContinue
                         $Sys64DllHash = Get-Hash -Algorithm MD5 -FilePath $check.FullName -ErrorAction SilentlyContinue
                     }
                     else
                     {
-                        $UserLandHash = Get-FileHash -Algorithm MD5 $UserLandDll.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-FileHash -Algorithm MD5 $TargetDirDll.FullName -ErrorAction SilentlyContinue
                         $Sys64DllHash = Get-FileHash -Algorithm MD5 $check.FullName -ErrorAction SilentlyContinue
                     }
             $SusDLLListObject = New-Object psobject
             $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
-            $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "SusDll" -Value $UserLandDll.FullName
-            $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "SusDllHash" -Value $UserLandHash.Hash
+            $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "SusDll" -Value $TargetDirDll.FullName
+            $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "SusDllHash" -Value $TargetDirHash.Hash
             $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "WinSysMatch" -Value $check.FullName
             $SusDLLListObject | Add-Member -MemberType NoteProperty -Name "WinSysHash" -Value $Sys32BinHash.Hash
             $SusDLLListArray += $SusDLLListObject
@@ -1741,47 +1761,47 @@ $SusDLLListArray | Export-csv -NoTypeInformation $CollectionPath\SuspiciousDllsL
 
 Function Get-SusDllsPS23
 {
-write-host "Analyzing DLLs in userland"
+write-host "Scanning for system dlls not in the default locations"
 $SusDllListArray = @()
 $ErrorActionPreference = "SilentlyContinue"
 $count = 0
 
 #Start Find possible sideloaded Dlls
-foreach($UserLandDll in $UserLandDLLs)
+foreach($TargetDirDll in $TargetDLLs)
 {    
-    if((@($64DllsOnly | %{$_.InputObject}) -contains $UserLandDll.Name))
+    if((@($64DllsOnly | %{$_.InputObject}) -contains $TargetDirDll.Name))
     {
-      $DllSigResult = Get-AuthenticodeSignature $UserLandDll.FullName -ErrorAction Ignore
-      $CertSubject = Get-AuthenticodeSignature $UserLandDll.FullName | ` Select-Object -Property @{Name='Subject';Expression={($_.SignerCertificate.Subject)}}
+      $DllSigResult = Get-AuthenticodeSignature $TargetDirDll.FullName -ErrorAction Ignore
+      $CertSubject = Get-AuthenticodeSignature $TargetDirDll.FullName | ` Select-Object -Property @{Name='Subject';Expression={($_.SignerCertificate.Subject)}}
       $MSSubject = "CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
       if ($CertSubject.Subject -ne $MSSubject)
       {  
-       [array]$check = $Sys64DLLList | where {$_.Name -eq $UserLandDll.Name}
+       [array]$check = $Sys64DLLList | where {$_.Name -eq $TargetDirDll.Name}
        
        if($check.Length -gt 1)
        {
             foreach($bin in $check)
             {
                 
-                [string]$stringpath = $UserLandDll.FullName
+                [string]$stringpath = $TargetDirDll.FullName
                 [string]$checkps2 = @($bin| %{$_.FullName})
                 if (($checkps2.ToLower() -ne $stringpath.ToLower()) -and ($stringpath.Length -gt 0))
                 {
            
                     if ($PSVersionTable.PSVersion.Major -lt 4)
                     {
-                        $UserLandHash = Get-Hash -Algorithm MD5 -FilePath $stringpath -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-Hash -Algorithm MD5 -FilePath $stringpath -ErrorAction SilentlyContinue
                         $Sys64DllHash = Get-Hash -Algorithm MD5 -FilePath $checkps2 -ErrorAction SilentlyContinue
                     }
                     else
                     {
-                        $UserLandHash = Get-FileHash -Algorithm MD5 $stringpath -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-FileHash -Algorithm MD5 $stringpath -ErrorAction SilentlyContinue
                         $Sys64DllHash = Get-FileHash -Algorithm MD5 $checkps2 -ErrorAction SilentlyContinue
                     }
                     $SusDllListObject = New-Object psobject
                     $SusDllListObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
                     $SusDllListObject | Add-Member -MemberType NoteProperty -Name "SusDll" -Value $stringpath
-                    $SusDllListObject | Add-Member -MemberType NoteProperty -Name "SusDllHash" -Value $UserLandHash.Hash
+                    $SusDllListObject | Add-Member -MemberType NoteProperty -Name "SusDllHash" -Value $TargetDirHash.Hash
                     $SusDllListObject | Add-Member -MemberType NoteProperty -Name "WinSysMatch" -Value $checkps2
                     $SusDllListObject | Add-Member -MemberType NoteProperty -Name "WinSysHash" -Value $Sys64DllHash.Hash
                     $SusDllListArray += $SusDllListObject
@@ -1790,26 +1810,26 @@ foreach($UserLandDll in $UserLandDLLs)
        }
        if($check.Length -eq 1)
        {
-            [string]$stringpath = $UserLandDll.FullName
+            [string]$stringpath = $TargetDirDll.FullName
             [string]$checkps2 = @($check| %{$_.FullName})
             if (($checkps2.ToLower() -ne $stringpath.ToLower()) -and ($stringpath.Length -gt 0))
             {
            
                     if ($PSVersionTable.PSVersion.Major -lt 4)
                     { 
-                        $UserLandHash = Get-Hash -Algorithm MD5 -FilePath $UserLandDll.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-Hash -Algorithm MD5 -FilePath $TargetDirDll.FullName -ErrorAction SilentlyContinue
                         $Sys64DllHash = Get-Hash -Algorithm MD5 -FilePath $checkps2 -ErrorAction SilentlyContinue
                     }
                     else
                     {
-                        $UserLandHash = Get-FileHash -Algorithm MD5 $UserLandBin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-FileHash -Algorithm MD5 $TargetDirBin.FullName -ErrorAction SilentlyContinue
                         $Sys64DllHash = Get-FileHash -Algorithm MD5 $checkps2 -ErrorAction SilentlyContinue
                     }
             $SusDllListObject = New-Object psobject
             $SusDllListObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
-            $SusDllListObject | Add-Member -MemberType NoteProperty -Name "SusDll" -Value $UserLandDll.FullName
+            $SusDllListObject | Add-Member -MemberType NoteProperty -Name "SusDll" -Value $TargetDirDll.FullName
             
-            $SusDllListObject | Add-Member -MemberType NoteProperty -Name "SusDllHash" -Value $UserLandHash.Hash
+            $SusDllListObject | Add-Member -MemberType NoteProperty -Name "SusDllHash" -Value $TargetDirHash.Hash
             $SusDllListObject | Add-Member -MemberType NoteProperty -Name "WinSysMatch" -Value $checkps2
             $SusDllListObject | Add-Member -MemberType NoteProperty -Name "WinSysHash" -Value $Sys64DllHash.Hash
             $SusDllListArray += $SusDllListObject
@@ -1817,38 +1837,38 @@ foreach($UserLandDll in $UserLandDLLs)
        }
       }
     }
-    elseif (@($Sys32DLLList| %{$_.Name}) -contains $UserLandDll.Name)
+    elseif (@($Sys32DLLList| %{$_.Name}) -contains $TargetDirDll.Name)
     {
-      $DllSigResult = Get-AuthenticodeSignature $UserLandDll.FullName -ErrorAction Ignore
-      $CertSubject = Get-AuthenticodeSignature $UserLandDll.FullName | ` Select-Object -Property @{Name='Subject';Expression={($_.SignerCertificate.Subject)}}
+      $DllSigResult = Get-AuthenticodeSignature $TargetDirDll.FullName -ErrorAction Ignore
+      $CertSubject = Get-AuthenticodeSignature $TargetDirDll.FullName | ` Select-Object -Property @{Name='Subject';Expression={($_.SignerCertificate.Subject)}}
       $MSSubject = "CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
       if ($CertSubject.Subject -ne $MSSubject)
       {  
-       [array]$check = $Sys32DLLList | where {$_.Name -eq $UserLandDll.Name}
+       [array]$check = $Sys32DLLList | where {$_.Name -eq $TargetDirDll.Name}
                     
        if($check.Length -gt 1)
        {
             foreach($bin in $check)
             {
-                [string]$stringpath = $UserLandDll.FullName
+                [string]$stringpath = $TargetDirDll.FullName
                 [string]$checkps2 = @($bin | %{$_.FullName})
                 if (($checkps2.ToLower() -ne $stringpath.ToLower()) -and ($stringpath.Length -gt 0))
                 {
            
                     if ($PSVersionTable.PSVersion.Major -lt 4)
                     {
-                        $UserLandHash = Get-Hash -Algorithm MD5 -FilePath $bin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-Hash -Algorithm MD5 -FilePath $bin.FullName -ErrorAction SilentlyContinue
                         $Sys32DllHash = Get-Hash -Algorithm MD5 -FilePath $checkps2 -ErrorAction SilentlyContinue
                     }
                     else
                     {
-                        $UserLandHash = Get-FileHash -Algorithm MD5 $bin.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-FileHash -Algorithm MD5 $bin.FullName -ErrorAction SilentlyContinue
                         $Sys32DllHash = Get-FileHash -Algorithm MD5 $checkps2 -ErrorAction SilentlyContinue
                     }
                     $SusDllListObject = New-Object psobject
                     $SusDllListObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
                     $SusDllListObject | Add-Member -MemberType NoteProperty -Name "SusDll" -Value $bin.FullName
-                    $SusDllListObject | Add-Member -MemberType NoteProperty -Name "SusDllHash" -Value $UserLandHash.Hash
+                    $SusDllListObject | Add-Member -MemberType NoteProperty -Name "SusDllHash" -Value $TargetDirHash.Hash
                     $SusDllListObject | Add-Member -MemberType NoteProperty -Name "WinSysMatch" -Value $checkps2
                     $SusDllListObject | Add-Member -MemberType NoteProperty -Name "WinSysHash" -Value $Sys32DllHash.Hash
                     $SusDllListArray += $SusDllListObject
@@ -1857,26 +1877,26 @@ foreach($UserLandDll in $UserLandDLLs)
        }
        if($check.Length -eq 1)
        {
-            [string]$stringpath = $UserLandDll.FullName
+            [string]$stringpath = $TargetDirDll.FullName
             [string]$checkps2 = @($check| %{$_.FullName})
             if (($checkps2.ToLower() -ne $stringpath.ToLower()) -and ($stringpath.Length -gt 0))
             {
            
                     if ($PSVersionTable.PSVersion.Major -lt 4)
                     {
-                        $UserLandHash = Get-Hash -Algorithm MD5 -FilePath $UserLandDll.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-Hash -Algorithm MD5 -FilePath $TargetDirDll.FullName -ErrorAction SilentlyContinue
                         $Sys32DllHash = Get-Hash -Algorithm MD5 -FilePath $checkps2 -ErrorAction SilentlyContinue
                     }
                     else
                     {
-                        $UserLandHash = Get-FileHash -Algorithm MD5 $UserLandDll.FullName -ErrorAction SilentlyContinue
+                        $TargetDirHash = Get-FileHash -Algorithm MD5 $TargetDirDll.FullName -ErrorAction SilentlyContinue
                         $Sys32DllHash = Get-FileHash -Algorithm MD5 $checkps2 -ErrorAction SilentlyContinue
                     }
             $SusDllListObject = New-Object psobject
             $SusDllListObject | Add-Member -MemberType NoteProperty -Name "ComputerName" -Value $env:COMPUTERNAME
-            $SusDllListObject | Add-Member -MemberType NoteProperty -Name "SusExe" -Value $UserLandDll.FullName
+            $SusDllListObject | Add-Member -MemberType NoteProperty -Name "SusExe" -Value $TargetDirDll.FullName
             
-            $SusDllListObject | Add-Member -MemberType NoteProperty -Name "SusExeHash" -Value $UserLandHash.Hash
+            $SusDllListObject | Add-Member -MemberType NoteProperty -Name "SusExeHash" -Value $TargetDirHash.Hash
             $SusDllListObject | Add-Member -MemberType NoteProperty -Name "WinSysMatch" -Value $checkps2
             $SusDllListObject | Add-Member -MemberType NoteProperty -Name "WinSysHash" -Value $Sys32DllHash.Hash
             $SusDllListArray += $SusDllListObject
@@ -1914,7 +1934,7 @@ New-Item $CollectionPath -Type Directory -Force
 $LRInvocation = $MyINvocation.InvocationName
 
 
-Write-Host "Gathering collection of userland DLLs"
+
 if ($PSVersionTable.PSVersion.Major -lt 4)
 {
     $ErrorActionPreference = "SilentlyContinue"
@@ -1923,13 +1943,11 @@ if ($PSVersionTable.PSVersion.Major -lt 4)
     $PS2_32Test = @($Sys32BinList | %{$_.Name})
     $PS2_64Test = @($Sys64BinList | %{$_.Name})
     $64BinsOnly = Compare-Object -ReferenceObject $PS2_64Test -DifferenceObject $PS2_32Test  | Where-Object {$_.SideIndicator -eq "<="} | Select InputObject
-    $UserLandBins = Get-ChildItem -Path $env:HOMEDRIVE\Users , $env:HOMEDRIVE\ProgramData, $env:HOMEDRIVE\Intel, $env:HOMEDRIVE\Recovery -Force -Recurse -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".exe")} -ErrorAction SilentlyContinue 
     $Sys32DLLList = Get-ChildItem $env:SystemRoot\system32\ -Recurse -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".dll")} -ErrorAction SilentlyContinue | Select Name, FullName
     $Sys64DLLList = Get-ChildItem $env:SystemRoot\syswow64\ -Recurse -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".dll")} -ErrorAction SilentlyContinue | Select Name, FullName
     $PS2_32Dlls = @($Sys32DLLList | %{$_.Name})
     $PS2_64Dlls = @($Sys64DLLList | %{$_.Name})
     $64DllsOnly = Compare-Object -ReferenceObject $PS2_64Dlls -DifferenceObject $PS2_32Dlls  | Where-Object {$_.SideIndicator -eq "<="} | Select InputObject
-    $UserLandDLLs = Get-ChildItem -Path $env:HOMEDRIVE\Users , $env:HOMEDRIVE\ProgramData, $env:HOMEDRIVE\Intel, $env:HOMEDRIVE\Recovery -Force -Recurse -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".dll")} -ErrorAction SilentlyContinue 
     Get-SideLoadDetectsPS23
     Get-SusShimCachePS23
     Get-SusExecsPS23
@@ -1941,10 +1959,8 @@ else
     $Sys32BinList = Get-ChildItem $env:SystemRoot\system32\ -Recurse -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".exe")} -ErrorAction SilentlyContinue | Select Name, FullName
     $Sys64BinList = Get-ChildItem $env:SystemRoot\syswow64\ -Recurse -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".exe")} -ErrorAction SilentlyContinue | Select Name, FullName
     $64BinsOnly = Compare-Object -ReferenceObject $Sys64BinList.Name -DifferenceObject $Sys32BinList.Name | Where-Object SideIndicator -eq '<=' | Select InputObject
-    $UserLandBins = Get-ChildItem -Path $env:HOMEDRIVE\Users , $env:HOMEDRIVE\ProgramData, $env:HOMEDRIVE\Intel, $env:HOMEDRIVE\Recovery -Force -Recurse -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".exe")} -ErrorAction SilentlyContinue 
     $Sys32DLLList = Get-ChildItem $env:SystemRoot\system32\ -Recurse -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".dll")} -ErrorAction SilentlyContinue | Select Name, FullName
     $Sys64DLLList = Get-ChildItem $env:SystemRoot\syswow64\ -Recurse -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".dll")} -ErrorAction SilentlyContinue | Select Name, FullName
-    $UserLandDLLs = Get-ChildItem -Path $env:HOMEDRIVE\Users , $env:HOMEDRIVE\ProgramData, $env:HOMEDRIVE\Intel, $env:HOMEDRIVE\Recovery -Force -Recurse -ErrorAction SilentlyContinue | Where-Object {($_.Extension -like ".dll")} -ErrorAction SilentlyContinue
     $64DllsOnly = Compare-Object -ReferenceObject $Sys64DLLList.Name -DifferenceObject $Sys32DLLList.Name | Where-Object SideIndicator -eq '<=' | Select InputObject
     Get-SideLoadDetectsPS45
     Get-SusShimCachePS45
